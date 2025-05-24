@@ -107,7 +107,7 @@ class LlaMa:
         for prompt_index, current_prompt_tokens in enumerate(tokens.tolist()):
             # Cut to the EOS token if present
             if self.tokenizer.eos_id in current_prompt_tokens:
-                # the above statement check if the current prompt tokens inside that of  a prompt does it have an "eos" token id?
+                # the above statement check if the current prompt tokens inside that of a prompt does it have an "eos" token id?
 
                 # Now we are computing the position index of the EOS token and NOT IT'S TOKEN ID
                 eos_idx = current_prompt_tokens.index(self.tokenizer.eos_id)
@@ -123,4 +123,47 @@ class LlaMa:
         # (B, vocab_size)
         probs_sum = torch.cumsum(probs_sort, dim=-1)
         # (B, vocab_size)
-        # 
+        # (Subtracting "probs_sort" shifts the cumulative sum of the probs by 1 position to the right)
+        mask = probs_sum - probs_sort > p
+        # Zero out all the probabilities of the tokens that are not selected by the Top-P
+        probs_sort[mask] = 0.0
+        # Redistribute the probabilities so that they sum up to 1
+        probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+        # Sample a token (its index) from the top p distribution
+        next_token = torch.multinomial(probs_sort, num_samples=1)
+        # Get the token position in the vocabulary corresponding to the sampled index
+        next_token = torch.gather(probs_idx, -1, next_token)
+        return next_token
+    
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+
+    allow_cuda = False
+    device = "cuda" if torch.cuda.is_available() and allow_cuda else "cpu"
+
+    prompts = [
+        "Simply put, the theory of relativity states that ",
+        "If google was an italian company founded in Milan, it would ",
+        """Translate English to French:
+        
+        sea otter => loutre de mer
+        peppermint => menthe poivrée
+        plush girafe => girafe peluche
+        cheese =>""",
+    ]
+
+    model = LlaMa.build(
+        checkpoints_dir='llama-2-7b/',
+        tokenizer_path='tokenizer.model',
+        load_model=True,
+        max_seq_len=1024,
+        max_batch_size=len(prompts),
+        device=device
+    )
+
+    out_tokens, out_texts = (model.text_completion(prompts, max_gen_len=64))
+    assert len(out_texts) == len(prompts)
+    for i in range(len(out_texts)):
+        print(f'{out_texts[i]}')
+        print('-' * 50)
